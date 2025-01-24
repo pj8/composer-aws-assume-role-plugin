@@ -48,9 +48,9 @@ The **AWS Assume Role Plugin for Composer** allows you to assume an AWS IAM role
 
 You can install the plugin using Composer. Run the following command in your project's root directory:
 
-[code=bash]
+```
 composer require --dev pj8/aws-assume-role-plugin
-[/code]
+```
 
 After installation, ensure that Composer recognizes the plugin. You might need to enable it globally or within your project, depending on your setup.
 
@@ -60,12 +60,12 @@ After installation, ensure that Composer recognizes the plugin. You might need t
 
 The plugin relies on AWS profiles defined in your `~/.aws/config` file. Ensure that you have a profile set up with the necessary `role_arn` and `mfa_serial`. Here's an example configuration:
 
-[code=ini]
+```
 [profile your-profile]
 role_arn = arn:aws:iam::123456789012:role/YourRole
 mfa_serial = arn:aws:iam::123456789012:mfa/YourMFADevice
 region = us-east-1
-[/code]
+```
 
 #### Manual Configuration
 
@@ -87,9 +87,9 @@ If neither option is specified, the plugin will output the temporary AWS credent
 
 To assume a role using a specific AWS profile and execute a Composer command:
 
-[code=bash]
+```
 composer assume-role --aws-profile=your-profile --composer-command=install
-[/code]
+```
 
 This command assumes the specified AWS IAM role with MFA and runs `composer install` using the temporary credentials.
 
@@ -97,9 +97,9 @@ This command assumes the specified AWS IAM role with MFA and runs `composer inst
 
 To assume a role and execute a general shell command:
 
-[code=bash]
+```
 composer assume-role --aws-profile=your-profile --command="php artisan migrate"
-[/code]
+```
 
 This command assumes the specified AWS IAM role with MFA and runs `php artisan migrate` using the temporary credentials.
 
@@ -107,19 +107,19 @@ This command assumes the specified AWS IAM role with MFA and runs `php artisan m
 
 If you do not specify either `--composer-command` or `--command`, the plugin will output the temporary AWS credentials in JSON format:
 
-[code=bash]
+```
 composer assume-role --aws-profile=your-profile
-[/code]
+```
 
 **Sample Output**:
 
-[code=json]
+```
 {
 "AccessKeyId": "ASIA...",
 "SecretAccessKey": "secret",
 "SessionToken": "token"
 }
-[/code]
+```
 
 You can use this JSON output in other tools or scripts as needed.
 
@@ -139,9 +139,9 @@ The plugin provides detailed error messages to help troubleshoot common issues:
 
 - **Both Options Specified**: If both `--composer-command` and `--command` are used simultaneously, an error message will be displayed.
 
-  [code=bash]
+  ```
   [error] You cannot specify both --composer-command and --command options at the same time.
-  [/code]
+  ```
 
 - **Invalid AWS Credentials**: If the provided AWS credentials are invalid or insufficient, appropriate error messages will guide you to resolve the issue.
 
@@ -174,9 +174,9 @@ This project is licensed under the [MIT License](LICENSE).
 
 プラグインはComposerを使用してインストールできます。プロジェクトのルートディレクトリで以下のコマンドを実行してください：
 
-[code=bash]
+```
 composer require --dev pj8/aws-assume-role-plugin
-[/code]
+```
 
 インストール後、Composerがプラグインを認識していることを確認してください。設定に応じて、グローバルまたはプロジェクト内で有効化が必要になる場合があります。
 
@@ -186,12 +186,12 @@ composer require --dev pj8/aws-assume-role-plugin
 
 プラグインは `~/.aws/config` ファイルに定義されたAWSプロファイルを使用します。必要な `role_arn` と `mfa_serial` を持つプロファイルが設定されていることを確認してください。以下は設定例です：
 
-[code=ini]
+```
 [profile your-profile]
 role_arn = arn:aws:iam::123456789012:role/YourRole
 mfa_serial = arn:aws:iam::123456789012:mfa/YourMFADevice
 region = us-east-1
-[/code]
+```
 
 #### 手動設定
 
@@ -213,9 +213,9 @@ AWSプロファイルを使用しない場合、コマンド実行時に必要�
 
 特定のAWSプロファイルを使用してロールをアサインし、Composerコマンドを実行するには以下のようにします：
 
-[code=bash]
+```
 composer assume-role --aws-profile=your-profile --composer-command=install
-[/code]
+```
 
 このコマンドは、指定されたAWS IAMロールをMFA付きでアサインし、一時的な認証情報を使用して `composer install` を実行します。
 
@@ -223,9 +223,9 @@ composer assume-role --aws-profile=your-profile --composer-command=install
 
 ロールをアサインし、任意のシェルコマンドを実行するには以下のようにします：
 
-[code=bash]
+```
 composer assume-role --aws-profile=your-profile --command="php artisan migrate"
-[/code]
+```
 
 このコマンドは、指定されたAWS IAMロールをMFA付きでアサインし、一時的な認証情報を使用して `php artisan migrate` を実行します。
 
@@ -233,19 +233,19 @@ composer assume-role --aws-profile=your-profile --command="php artisan migrate"
 
 `--composer-command` と `--command` のいずれも指定しない場合、プラグインは一時的なAWS認証情報をJSON形式で標準出力に出力し、処理を終了します：
 
-[code=bash]
+```
 composer assume-role --aws-profile=your-profile
-[/code]
+```
 
 **出力例**：
 
-[code=json]
+```
 {
 "AccessKeyId": "ASIA...",
 "SecretAccessKey": "secret",
 "SessionToken": "token"
 }
-[/code]
+```
 
 このJSONは、他のツールやスクリプトで利用するために保存や解析が可能です。
 
@@ -265,9 +265,9 @@ AWS IAM ロールを正常にアサインした後、プラグインは以下の
 
 - **両方のオプションが指定された場合**: `--composer-command` と `--command` を同時に使用するとエラーメッセージが表示されます。
 
-  [code=bash]
+  ```
   [error] You cannot specify both --composer-command and --command options at the same time.
-  [/code]
+  ```
 
 - **無効なAWS認証情報**: 提供されたAWS認証情報が無効または不十分な場合、適切なエラーメッセージが表示されます。
 
