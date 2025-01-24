@@ -28,7 +28,7 @@ final class AssumeRoleCommand extends BaseCommand
     {
         $this
             ->setName('assume-role')
-            ->setDescription('Assume an AWS IAM role with MFA and execute a Composer command or another command.')
+            ->setDescription('Assume an AWS IAM role with optional MFA and execute a command or export environment variables.')
             ->addOption(
                 'aws-profile',
                 null,
@@ -36,65 +36,40 @@ final class AssumeRoleCommand extends BaseCommand
                 'The AWS CLI profile to use for retrieving RoleArn and MFA Serial.'
             )
             ->addOption(
-                'composer-command',
-                null,
-                InputOption::VALUE_REQUIRED,
-                'The Composer command to execute after assuming the role.'
-            )
-            ->addOption(
                 'command',
                 null,
                 InputOption::VALUE_REQUIRED,
                 'The command to execute after assuming the role.'
+            )
+            ->addOption(
+                'code',
+                null,
+                InputOption::VALUE_REQUIRED,
+                'The MFA code to use for authentication (if required).'
             );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $profile = $input->getOption('aws-profile');
-        $composerCommand = $input->getOption('composer-command');
         $command = $input->getOption('command');
+        $mfaCode = $input->getOption('code');
         $io = $this->getIO();
         assert($io !== null);
 
         try {
-            $config = $profile ? $this->getConfigWithProfile($profile, $io) : $this->promptForConfig($io);
-            $mfaToken = $this->promptForMfaToken($io);
-            $credentials = $this->assumeRole($config, $mfaToken, $profile);
-
-            if ($composerCommand && $command) {
-                $io->writeError('<error>You cannot specify both --composer-command and --command options at the same time.</error>');
-
-                return 1;
-            }
-
-            if ($composerCommand) {
-                $io->write('<info>AssumeRole succeeded! Temporary credentials have been set.</info>');
-                $io->write(sprintf('Executing Composer command: composer %s', $composerCommand));
-                $env = $this->prepareEnvironment($credentials);
-                $this->runComposerCommand($composerCommand, $env, $output);
-
-                return 0;
-            }
+            $config = $profile ? $this->getProfileConfiguration($profile) : $this->promptForConfig($io);
+            $credentials = $this->assumeRole($config, $profile, $io, $mfaCode);
 
             if ($command) {
-                $io->write('<info>AssumeRole succeeded! Temporary credentials have been set.</info>');
-                $io->write(sprintf('Executing command: %s', $command));
                 $env = $this->prepareEnvironment($credentials);
                 $this->runGeneralCommand($command, $env, $output);
 
                 return 0;
             }
 
-            $io->write('<info>AssumeRole succeeded! Temporary credentials have been retrieved.</info>');
-            $json = json_encode($credentials, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT);
-            if ($json === false) {
-                $io->writeError('<error>Failed to encode credentials as JSON.</error>');
-
-                return 1;
-            }
-
-            $output->writeln($json);
+            $envExports = $this->prepareEnvExports($credentials);
+            $output->writeln($envExports);
         } catch (CredentialsException $e) {
             $this->handleCredentialsException($e, $io);
 
@@ -117,42 +92,13 @@ final class AssumeRoleCommand extends BaseCommand
     }
 
     /**
-     * @return array{RoleArn: string, MfaSerial: string, region: string}
-     *
-     * @throws RuntimeException
-     */
-    private function getConfigWithProfile(string $profile, IOInterface $io): array
-    {
-        $io->write(sprintf('Using AWS profile: <info>%s</info>', $profile));
-
-        return $this->getProfileConfiguration($profile);
-    }
-
-    /** @return array{RoleArn: string, MfaSerial: string, region: string} */
-    private function promptForConfig(IOInterface $io): array
-    {
-        $io->write('<comment>No profile specified. Please enter details manually.</comment>');
-
-        return [
-            'RoleArn'    => $io->ask('Enter the Role ARN: '),
-            'MfaSerial'  => $io->ask('Enter your MFA Device ARN: '),
-            'region'     => $io->ask('Enter the AWS region [us-east-1]: ', 'us-east-1'),
-        ];
-    }
-
-    private function promptForMfaToken(IOInterface $io): string
-    {
-        return $io->ask('Enter your AWS MFA token: ');
-    }
-
-    /**
      * @param array{RoleArn: string, MfaSerial: string, region: string} $config
      * @return array{AccessKeyId: string, SecretAccessKey: string, SessionToken: string}
      *
      * @throws AwsException
      * @throws CredentialsException
      */
-    private function assumeRole(array $config, string $mfaToken, string|null $profile): array
+    private function assumeRole(array $config, string|null $profile, IOInterface $io, string|null $mfaCode): array
     {
         $stsClientConfig = [
             'version' => '2011-06-15',
@@ -165,14 +111,20 @@ final class AssumeRoleCommand extends BaseCommand
 
         $stsClient = $this->stsClientFactory->create($stsClientConfig);
         try {
-            $result = $stsClient->assumeRole([
+            $assumeRoleParams = [
                 'RoleArn'         => $config['RoleArn'],
                 'RoleSessionName' => 'ComposerSession_' . time(),
-                'SerialNumber'    => $config['MfaSerial'],
-                'TokenCode'       => $mfaToken,
-            ]);
+            ];
 
-            return $result['Credentials'];
+            $assumeRoleParams['SerialNumber'] = $config['MfaSerial'];
+            $assumeRoleParams['TokenCode'] = $mfaCode ?? $this->promptForMfaToken($io);
+            $result = $stsClient->assumeRole($assumeRoleParams);
+
+            return [
+                'AccessKeyId'     => $result['Credentials']['AccessKeyId'],
+                'SecretAccessKey' => $result['Credentials']['SecretAccessKey'],
+                'SessionToken'    => $result['Credentials']['SessionToken'],
+            ];
         } catch (AwsException $e) {
             if ($e->getAwsErrorCode() === 'CredentialsError') {
                 throw new CredentialsException('Failed to retrieve credentials.', 0, $e);
@@ -182,47 +134,15 @@ final class AssumeRoleCommand extends BaseCommand
         }
     }
 
-    /**
-     * @param array{AccessKeyId: string, SecretAccessKey: string, SessionToken: string} $credentials
-     *
-     * @return array<string, string>
-     */
-    private function prepareEnvironment(array $credentials): array
+    /** @param array{AccessKeyId: string, SecretAccessKey: string, SessionToken: string} $credentials */
+    private function prepareEnvExports(array $credentials): string
     {
-        $existingEnv = $_ENV;
-
-        foreach ($_SERVER as $key => $value) {
-            if (!isset($existingEnv[$key])) {
-                $existingEnv[$key] = $value;
-            }
-        }
-
-        return array_merge($existingEnv, [
-            'AWS_ACCESS_KEY_ID'     => $credentials['AccessKeyId'],
-            'AWS_SECRET_ACCESS_KEY' => $credentials['SecretAccessKey'],
-            'AWS_SESSION_TOKEN'     => $credentials['SessionToken'],
-        ]);
-    }
-
-    /**
-     * @param array<string, string> $env
-     *
-     * @throws ProcessFailedException
-     */
-    private function runComposerCommand(string $composerCommand, array $env, OutputInterface $output): void
-    {
-        $fullCommand = sprintf('composer %s', $composerCommand);
-        $process = $this->processFactory->create($fullCommand);
-        $process->setEnv($env);
-        $process->setTimeout(null);
-
-        $process->run(function ($type, $buffer) use ($output): void {
-            $output->write($buffer);
-        });
-
-        if (!$process->isSuccessful()) {
-            throw new ProcessFailedException($process);
-        }
+        return sprintf(
+            "export AWS_ACCESS_KEY_ID=%s\nexport AWS_SECRET_ACCESS_KEY=%s\nexport AWS_SESSION_TOKEN=%s",
+            escapeshellarg($credentials['AccessKeyId']),
+            escapeshellarg($credentials['SecretAccessKey']),
+            escapeshellarg($credentials['SessionToken'])
+        );
     }
 
     /**
@@ -243,6 +163,48 @@ final class AssumeRoleCommand extends BaseCommand
         if (!$process->isSuccessful()) {
             throw new ProcessFailedException($process);
         }
+    }
+
+    /**
+     * @param array{AccessKeyId: string, SecretAccessKey: string, SessionToken: string} $credentials
+     * @return array<string, string>
+     */
+    private function prepareEnvironment(array $credentials): array
+    {
+        $existingEnv = $_ENV;
+
+        foreach ($_SERVER as $key => $value) {
+            if (!isset($existingEnv[$key])) {
+                $existingEnv[$key] = $value;
+            }
+        }
+
+        return array_merge($existingEnv, [
+            'AWS_ACCESS_KEY_ID'     => $credentials['AccessKeyId'],
+            'AWS_SECRET_ACCESS_KEY' => $credentials['SecretAccessKey'],
+            'AWS_SESSION_TOKEN'     => $credentials['SessionToken'],
+        ]);
+    }
+
+    /** @return array{RoleArn: string, MfaSerial?: string, region: string} */
+    private function promptForConfig(IOInterface $io): array
+    {
+        $io->write('<comment>No profile specified. Please enter details manually.</comment>');
+
+        $roleArn = $io->ask('Enter the Role ARN: ');
+        $mfaSerial = $io->ask('Enter your MFA Device ARN (leave blank if not using MFA): ');
+        $region = $io->ask('Enter the AWS region [us-east-1]: ', 'us-east-1');
+
+        $config = [
+            'RoleArn'   => $roleArn,
+            'region'    => $region,
+        ];
+
+        if (!empty($mfaSerial)) {
+            $config['MfaSerial'] = $mfaSerial;
+        }
+
+        return $config;
     }
 
     /**
@@ -268,22 +230,24 @@ final class AssumeRoleCommand extends BaseCommand
 
         $profileConfig = $config[$profileKey];
 
-        if (empty($profileConfig['role_arn']) || empty($profileConfig['mfa_serial'])) {
-            throw new RuntimeException("Profile '{$profile}' must have 'role_arn' and 'mfa_serial' defined.");
+        if (empty($profileConfig['role_arn'])) {
+            throw new RuntimeException("Profile '{$profile}' must have 'role_arn' defined.");
+        }
+
+        if (empty($profileConfig['mfa_serial'])) {
+            throw new RuntimeException("Profile '{$profile}' must have 'mfa_serial' defined.");
         }
 
         return [
-            'RoleArn'    => $profileConfig['role_arn'],
-            'MfaSerial'  => $profileConfig['mfa_serial'],
-            'region'     => $profileConfig['region'] ?? 'us-east-1',
+            'RoleArn'   => $profileConfig['role_arn'],
+            'region'    => $profileConfig['region'] ?? 'us-east-1',
+            'MfaSerial' => $profileConfig['mfa_serial'],
         ];
     }
 
-    private function handleCredentialsException(CredentialsException $e, IOInterface $io): void
+    private function promptForMfaToken(IOInterface $io): string
     {
-        $io->writeError('<error>Failed to retrieve AWS credentials.</error>');
-        $io->writeError(sprintf('<error>Reason: %s</error>', $e->getMessage()));
-        $io->writeError('<comment>Please ensure that your AWS credentials are correctly configured and have the necessary permissions.</comment>');
+        return $io->ask('Enter your AWS MFA token: ');
     }
 
     private function handleAwsException(AwsException $e, IOInterface $io): void
@@ -315,5 +279,12 @@ final class AssumeRoleCommand extends BaseCommand
         }
 
         $io->writeError(sprintf('<error>AWS Error [%s]: %s</error>', $errorCode, $errorMessage));
+    }
+
+    private function handleCredentialsException(CredentialsException $e, IOInterface $io): void
+    {
+        $io->writeError('<error>Failed to retrieve AWS credentials.</error>');
+        $io->writeError(sprintf('<error>Reason: %s</error>', $e->getMessage()));
+        $io->writeError('<comment>Please ensure that your AWS credentials are correctly configured and have the necessary permissions.</comment>');
     }
 }

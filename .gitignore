@@ -1,0 +1,12 @@
+.env
+.phpunit.result.cache
+/.phpunit.cache/
+/vendor/
+/build/
+phpunit.xml
+/.phpcs.xml
+/.phpcs-cache
+/vendor-bin/**/vendor/
+composer.lock
+/.idea
+/.vscode
